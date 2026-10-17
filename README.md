@@ -11,10 +11,10 @@ An enterprise-grade, highly available WordPress architecture deployed on **Amazo
 ![AWS EKS Enterprise WordPress Architecture](docs/screenshots/architecture-diagram.png)
 
 - **Cloud Provider:** AWS (`us-east-1`)
-- **Infrastructure as Code:** Terraform (Modular setup: VPC, EKS, RDS, EFS)[cite: 1, 2]
-- **Container Orchestration:** Kubernetes (EKS Managed Node Groups, HPA)[cite: 1, 2]
-- **Database:** Amazon RDS for MySQL (Multi-AZ Primary & Standby)[cite: 1]
-- **Storage:** Amazon EFS for persistent shared WordPress content (`wp-content/uploads`)[cite: 1]
+- **Infrastructure as Code:** Terraform (Modular setup: VPC, EKS, RDS, EFS)
+- **Container Orchestration:** Kubernetes (EKS Managed Node Groups, HPA)
+- **Database:** Amazon RDS for MySQL (Multi-AZ Primary & Standby)
+- **Storage:** Amazon EFS for persistent shared WordPress content (`wp-content/uploads`)
 
 ---
 
@@ -39,10 +39,10 @@ aws-eks-wordpress-enterprise/
 │   ├── variables.tf            # Input configuration variables
 │   ├── outputs.tf              # Connection endpoints and outputs
 │   ├── vpc.tf                  # Networking, subnets, and routing
-│   ├── eks.tf                  # EKS cluster and compute nodes[cite: 2]
-│   ├── rds.tf                  # Multi-AZ MySQL database[cite: 2]
-│   └── efs.tf                  # Elastic File System storage[cite: 2]
-└── kubernetes/                 # Kubernetes deployment manifests[cite: 2]
+│   ├── eks.tf                  # EKS cluster and compute nodes
+│   ├── rds.tf                  # Multi-AZ MySQL database
+│   └── efs.tf                  # Elastic File System storage
+└── kubernetes/                 # Kubernetes deployment manifests
     ├── wordpress-deployment.yaml
     ├── wordpress-service.yaml
     ├── persistent-volume.yaml
