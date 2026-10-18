@@ -1,3 +1,32 @@
+# AWS EKS Enterprise WordPress Infrastructure
+
+An enterprise-grade, highly available WordPress architecture deployed on **Amazon EKS (Elastic Kubernetes Service)**, using **Terraform** for Infrastructure as Code (IaC), **Kubernetes/Helm** for orchestration, and automated **CI/CD** pipelines.
+
+---
+
+## 🏗️ Architecture Overview
+
+![AWS EKS Enterprise WordPress Architecture](docs/screenshots/architecture-diagram.png)
+
+| Component | Technology |
+| :--- | :--- |
+| **Cloud Provider** | AWS (`us-east-1`) |
+| **Infrastructure as Code** | Terraform (VPC, EKS, RDS, EFS) |
+| **Container Orchestration** | Kubernetes (EKS Managed Node Groups, HPA) |
+| **Database** | Amazon RDS for MySQL (Multi-AZ Primary & Standby) |
+| **Storage** | Amazon EFS for persistent shared WordPress content (`wp-content/uploads`) |
+| **CI/CD** | GitHub Actions |
+
+---
+
+## 📑 Table of Contents
+
+- [Phase 1: Repository Setup, Folder Structure & Version Control](#-phase-1-repository-setup-folder-structure--version-control)
+- [Phase 2: Infrastructure Provisioning (Terraform)](#-phase-2-infrastructure-provisioning-terraform)
+- [Phase 3: Kubernetes Orchestration & Storage Configuration](#-phase-3-kubernetes-orchestration--storage-configuration)
+
+---
+
 ## 📦 Phase 1: Repository Setup, Folder Structure & Version Control
 
 ### 🎯 Phase Objectives
