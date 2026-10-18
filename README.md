@@ -1,32 +1,3 @@
-# AWS EKS Enterprise WordPress Infrastructure
-
-An enterprise-grade, highly available WordPress architecture deployed on **Amazon EKS (Elastic Kubernetes Service)**, using **Terraform** for Infrastructure as Code (IaC), **Kubernetes/Helm** for orchestration, and automated **CI/CD** pipelines.
-
----
-
-## 🏗️ Architecture Overview
-
-![AWS EKS Enterprise WordPress Architecture](docs/screenshots/architecture-diagram.png)
-
-| Component | Technology |
-| :--- | :--- |
-| **Cloud Provider** | AWS (`us-east-1`) |
-| **Infrastructure as Code** | Terraform (VPC, EKS, RDS, EFS) |
-| **Container Orchestration** | Kubernetes (EKS Managed Node Groups, HPA) |
-| **Database** | Amazon RDS for MySQL (Multi-AZ Primary & Standby) |
-| **Storage** | Amazon EFS for persistent shared WordPress content (`wp-content/uploads`) |
-| **CI/CD** | GitHub Actions |
-
----
-
-## 📑 Table of Contents
-
-- [Phase 1: Repository Setup, Folder Structure & Version Control](#-phase-1-repository-setup-folder-structure--version-control)
-- [Phase 2: Infrastructure Provisioning (Terraform)](#-phase-2-infrastructure-provisioning-terraform)
-- [Phase 3: Kubernetes Orchestration & Storage Configuration](#-phase-3-kubernetes-orchestration--storage-configuration)
-
----
-
 ## 📦 Phase 1: Repository Setup, Folder Structure & Version Control
 
 ### 🎯 Phase Objectives
@@ -36,7 +7,7 @@ An enterprise-grade, highly available WordPress architecture deployed on **Amazo
 - Define initial placeholder configuration files for Terraform, Kubernetes manifests, and automated GitHub Actions workflows.
 - Set up project documentation and portfolio screenshot tracking.
 
-### 📂 Project Directory Structure
+### 📂 Project Directory Structure (Current)
 
 ```text
 aws-eks-wordpress-enterprise/
@@ -47,14 +18,21 @@ aws-eks-wordpress-enterprise/
 │   ├── variables.tf            # Input configuration variables
 │   ├── outputs.tf              # Connection endpoints and outputs
 │   ├── vpc.tf                  # Networking, subnets, and routing
+│   ├── security.tf             # Security groups and network access rules
 │   ├── eks.tf                  # EKS cluster and compute nodes
 │   ├── rds.tf                  # Multi-AZ MySQL database
-│   └── efs.tf                  # Elastic File System storage
-└── kubernetes/                 # Kubernetes deployment manifests
-    ├── wordpress-deployment.yaml
-    ├── wordpress-service.yaml
-    ├── persistent-volume.yaml
-    └── hpa.yaml
+│   ├── efs.tf                  # Elastic File System storage
+│   └── .terraform.lock.hcl     # Provider version lock file
+├── kubernetes/                 # Kubernetes deployment manifests
+│   ├── storage-class.yaml      # EFS StorageClass (efs.csi.aws.com)
+│   ├── persistent-volume.yaml  # Persistent volume configuration
+│   ├── wordpress-pvc.yaml      # ReadWriteMany PersistentVolumeClaim
+│   ├── wordpress-deployment.yaml
+│   ├── wordpress-service.yaml
+│   └── hpa.yaml                # Horizontal Pod Autoscaler
+├── trust-policy.json           # IAM trust policy
+├── .gitignore
+└── README.md
 ```
 
 ### 📸 Portfolio Screenshots (Phase 1)
@@ -66,6 +44,8 @@ aws-eks-wordpress-enterprise/
 
 ![Phase 1 - GitHub Repository Setup](docs/screenshots/phase1-github-repo.png)
 ![Phase 1 - VS Code Directory Structure](docs/screenshots/phase1-vscode-structure.png)
+
+> **Note:** Screenshots reflect the initial Phase 1 scaffold; the structure above includes files added in later phases.
 
 ---
 
