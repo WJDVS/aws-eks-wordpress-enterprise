@@ -48,9 +48,9 @@ aws-eks-wordpress-enterprise/
     ├── persistent-volume.yaml
     └── hpa.yaml
 
-    ---
+---
 
-    ## 📑 Phase 2: Infrastructure Provisioning (Terraform)
+## 📑 Phase 2: Infrastructure Provisioning (Terraform)
 
 ### 🎯 Phase Objectives
 - Configure core AWS provider settings and reusable input variables (`main.tf`, `variables.tf`).
