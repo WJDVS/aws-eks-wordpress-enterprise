@@ -56,6 +56,16 @@ aws-eks-wordpress-enterprise/
     └── hpa.yaml
 ```
 
+### 📸 Portfolio Screenshots (Phase 1)
+
+| Screenshot File Name | Visual Proof / Content Description |
+| :--- | :--- |
+| `docs/screenshots/phase1-github-repo.png` | GitHub repository home page showing `aws-eks-wordpress-enterprise`, public visibility, and base `.gitignore`. |
+| `docs/screenshots/phase1-vscode-structure.png` | VS Code Explorer tree displaying all created directories (`terraform/`, `kubernetes/`, `docs/screenshots/`) and placeholder `.tf` / `.yaml` files. |
+
+![Phase 1 - GitHub Repository Setup](docs/screenshots/phase1-github-repo.png)
+![Phase 1 - VS Code Directory Structure](docs/screenshots/phase1-vscode-structure.png)
+
 ---
 
 ## 📁 Phase 2: Infrastructure Provisioning (Terraform)
