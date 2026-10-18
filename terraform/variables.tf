@@ -1,11 +1,17 @@
 variable "aws_region" {
-	type        = string
-	description = "Target AWS region for enterprise deployment"
-	default     = "us-east-1"
+  type        = string
+  description = "Target AWS region for enterprise deployment"
+  default     = "us-east-1"
 }
 
 variable "environment" {
-	type        = string
-	description = "Deployment environment tag"
-	default     = "production"
+  type        = string
+  description = "Deployment environment tag"
+  default     = "production"
+}
+
+variable "db_password" {
+  description = "Master password for the WordPress RDS instance"
+  type        = string
+  sensitive   = true
 }
