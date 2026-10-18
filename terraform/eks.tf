@@ -3,12 +3,31 @@ module "eks" {
   version = "~> 20.0"
 
   cluster_name    = "aws-eks-wordpress-cluster"
-  cluster_version = "1.31" # Updated to a supported version
+  cluster_version = "1.31"
 
   cluster_endpoint_public_access = true
+  authentication_mode            = "API_AND_CONFIG_MAP"
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
+
+  # Let the module manage admin permissions via our custom entry only, avoiding duplicate creator conflicts
+  enable_cluster_creator_admin_permissions = false
+
+  access_entries = {
+    admin_user = {
+      principal_arn = "arn:aws:iam::891612560987:user/aws-eks-wordpress-admin"
+      type          = "STANDARD"
+      policy_associations = {
+        admin = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+      }
+    }
+  }
 
   # EKS Managed Node Groups
   eks_managed_node_groups = {
