@@ -50,7 +50,7 @@ aws-eks-wordpress-enterprise/
 
 ---
 
-## 📑 Phase 2: Infrastructure Provisioning (Terraform)
+## 📁 Phase 2: Infrastructure Provisioning (Terraform)
 
 ### 🎯 Phase Objectives
 - Configure core AWS provider settings and reusable input variables (`main.tf`, `variables.tf`).
