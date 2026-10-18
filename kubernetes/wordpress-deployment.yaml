@@ -29,13 +29,20 @@ spec:
               name: wordpress
           env:
             - name: WORDPRESS_DB_HOST
-              value: "your-rds-endpoint-here" # Update with your RDS endpoint if applicable
+              value: "aws-eks-wordpress-db.cynq6gqcsg2c.us-east-1.rds.amazonaws.com"
             - name: WORDPRESS_DB_NAME
               value: "wordpress"
             - name: WORDPRESS_DB_USER
-              value: "wordpress_user"
+              value: "admin"
             - name: WORDPRESS_DB_PASSWORD
-              value: "secure_password_here"
+              value: "SecureWordPressAdminPassword2026!"
+            - name: WORDPRESS_DEBUG
+              value: "1"
+            - name: WORDPRESS_CONFIG_EXTRA
+              value: |
+                define('WP_DEBUG', true);
+                define('WP_DEBUG_DISPLAY', true);
+                define('WP_DEBUG_LOG', true);
           volumeMounts:
             - name: wordpress-persistent-storage
               mountPath: /var/www/html
@@ -43,3 +50,4 @@ spec:
         - name: wordpress-persistent-storage
           persistentVolumeClaim:
             claimName: wordpress-efs-pvc
+                   
