@@ -1,34 +1,41 @@
 # AWS EKS Enterprise WordPress Infrastructure
 
-An enterprise-grade, highly available WordPress architecture deployed on **Amazon EKS (Elastic Kubernetes Service)** using **Terraform** for Infrastructure as Code (IaC), **Kubernetes/Helm** for orchestration, and automated CI/CD pipelines.
+An enterprise-grade, highly available WordPress architecture deployed on **Amazon EKS (Elastic Kubernetes Service)**, using **Terraform** for Infrastructure as Code (IaC), **Kubernetes/Helm** for orchestration, and automated **CI/CD** pipelines.
 
 ---
 
 ## 🏗️ Architecture Overview
 
-An enterprise-grade, highly available WordPress architecture deployed on **Amazon EKS (Elastic Kubernetes Service)** using **Terraform** for Infrastructure as Code (IaC), **Kubernetes/Helm** for orchestration, and automated CI/CD pipelines.
-
 ![AWS EKS Enterprise WordPress Architecture](docs/screenshots/architecture-diagram.png)
 
-- **Cloud Provider:** AWS (`us-east-1`)
-- **Infrastructure as Code:** Terraform (Modular setup: VPC, EKS, RDS, EFS)
-- **Container Orchestration:** Kubernetes (EKS Managed Node Groups, HPA)
-- **Database:** Amazon RDS for MySQL (Multi-AZ Primary & Standby)
-- **Storage:** Amazon EFS for persistent shared WordPress content (`wp-content/uploads`)
+| Component | Technology |
+| :--- | :--- |
+| **Cloud Provider** | AWS (`us-east-1`) |
+| **Infrastructure as Code** | Terraform (VPC, EKS, RDS, EFS) |
+| **Container Orchestration** | Kubernetes (EKS Managed Node Groups, HPA) |
+| **Database** | Amazon RDS for MySQL (Multi-AZ Primary & Standby) |
+| **Storage** | Amazon EFS for persistent shared WordPress content (`wp-content/uploads`) |
+| **CI/CD** | GitHub Actions |
 
 ---
 
-## 📑 Phase 1: Repository Setup, Folder Structure & Version Control
+## 📑 Table of Contents
+
+- [Phase 1: Repository Setup, Folder Structure & Version Control](#-phase-1-repository-setup-folder-structure--version-control)
+- [Phase 2: Infrastructure Provisioning (Terraform)](#-phase-2-infrastructure-provisioning-terraform)
+
+---
+
+## 📦 Phase 1: Repository Setup, Folder Structure & Version Control
 
 ### 🎯 Phase Objectives
+
 - Establish the central Git repository on GitHub (`aws-eks-wordpress-enterprise`) as the project's single source of truth.
 - Initialize a local workspace in Visual Studio Code with a modular, scalable directory tree.
 - Define initial placeholder configuration files for Terraform, Kubernetes manifests, and automated GitHub Actions workflows.
 - Set up project documentation and portfolio screenshot tracking.
 
----
-
-## 📂 Project Directory Structure
+### 📂 Project Directory Structure
 
 ```text
 aws-eks-wordpress-enterprise/
@@ -47,12 +54,14 @@ aws-eks-wordpress-enterprise/
     ├── wordpress-service.yaml
     ├── persistent-volume.yaml
     └── hpa.yaml
+```
 
 ---
 
 ## 📁 Phase 2: Infrastructure Provisioning (Terraform)
 
 ### 🎯 Phase Objectives
+
 - Configure core AWS provider settings and reusable input variables (`main.tf`, `variables.tf`).
 - Provision a highly available Multi-AZ Virtual Private Cloud (`vpc.tf`) featuring public and private subnets, internet gateways, and NAT gateways.
 - Deploy an enterprise Amazon EKS cluster (`eks.tf`) running version `1.31` with managed EC2 node groups across private subnets.
@@ -61,26 +70,34 @@ aws-eks-wordpress-enterprise/
 
 ### 🛠️ Step-by-Step Provisioning Summary
 
-1. **Core Providers & Input Variables (`main.tf`, `variables.tf`)**
-   - Configured HashiCorp AWS provider (`~> 5.0`) targeting region `us-east-1`.
-   - Standardized tags (`Project = "aws-eks-wordpress-enterprise"`, `ManagedBy = "Terraform"`, `Environment = "production"`) applied globally to all AWS resources.
+#### 1. Core Providers & Input Variables (`main.tf`, `variables.tf`)
 
-2. **Multi-AZ Networking (`vpc.tf`)**
-   - Provisioned VPC with CIDR block `10.0.0.0/16` across Availability Zones `us-east-1a` and `us-east-1b`.
-   - Configured public subnets (`10.0.1.0/24`, `10.0.2.0/24`) and private subnets (`10.0.10.0/24`, `10.0.11.0/24`).
-   - Added Kubernetes auto-discovery tags (`kubernetes.io/role/elb` and `kubernetes.io/role/internal-elb`) for automated load balancer controller subnet identification.
+- Configured the HashiCorp AWS provider (`~> 5.0`) targeting region `us-east-1`.
+- Standardized tags applied globally to all AWS resources:
+  - `Project = "aws-eks-wordpress-enterprise"`
+  - `ManagedBy = "Terraform"`
+  - `Environment = "production"`
 
-3. **Kubernetes Cluster & Compute (`eks.tf`)**
-   - Deployed Amazon EKS cluster `aws-eks-wordpress-cluster` on Kubernetes `v1.31`.
-   - Configured EKS Managed Node Groups with `t3.medium` instances across private subnets with auto-scaling boundaries (minimum 2, desired 2, maximum 4 nodes).
+#### 2. Multi-AZ Networking (`vpc.tf`)
 
-4. **Relational Database (`rds.tf`)**
-   - Provisioned Amazon RDS MySQL 8.0 instance (`db.t3.micro`) configured with Multi-AZ replication for high availability and failover.
-   - Placed RDS inside private database subnet groups with restricted network access.
+- Provisioned a VPC with CIDR block `10.0.0.0/16` across Availability Zones `us-east-1a` and `us-east-1b`.
+- Configured public subnets (`10.0.1.0/24`, `10.0.2.0/24`) and private subnets (`10.0.10.0/24`, `10.0.11.0/24`).
+- Added Kubernetes auto-discovery tags (`kubernetes.io/role/elb` and `kubernetes.io/role/internal-elb`) so the load balancer controller can identify subnets automatically.
 
-5. **Persistent Shared Storage (`efs.tf`)**
-   - Created an encrypted Amazon EFS file system (`aws-eks-wordpress-efs`) in general-purpose mode.
-   - Deployed EFS mount targets across private subnets with a dedicated security group permitting NFS traffic (`port 2049`) from the VPC CIDR.
+#### 3. Kubernetes Cluster & Compute (`eks.tf`)
+
+- Deployed the Amazon EKS cluster `aws-eks-wordpress-cluster` on Kubernetes `v1.31`.
+- Configured EKS Managed Node Groups with `t3.medium` instances across private subnets, with auto-scaling boundaries of minimum 2, desired 2, and maximum 4 nodes.
+
+#### 4. Relational Database (`rds.tf`)
+
+- Provisioned an Amazon RDS MySQL 8.0 instance (`db.t3.micro`) with Multi-AZ replication for high availability and failover.
+- Placed RDS inside private database subnet groups with restricted network access.
+
+#### 5. Persistent Shared Storage (`efs.tf`)
+
+- Created an encrypted Amazon EFS file system (`aws-eks-wordpress-efs`) in general-purpose mode.
+- Deployed EFS mount targets across private subnets with a dedicated security group permitting NFS traffic (port `2049`) from the VPC CIDR.
 
 ### 📸 Portfolio Screenshots (Phase 2)
 
@@ -88,8 +105,8 @@ aws-eks-wordpress-enterprise/
 | :--- | :--- |
 | `docs/screenshots/phase2-vpc-plan.png` | Terminal output showing successful execution of `terraform plan` for VPC network provisioning. |
 | `docs/screenshots/phase2-eks-apply.png` | Successful `terraform apply` log output confirming EKS control plane and node group creation. |
-| `docs/screenshots/phase2-rds-apply.png` | Terminal confirmation showing Multi-AZ RDS MySQL database successfully created. |
-| `docs/screenshots/phase2-efs-apply.png` | Terminal confirmation verifying EFS file system, security group, and mount targets created. |
+| `docs/screenshots/phase2-rds-apply.png` | Terminal confirmation showing the Multi-AZ RDS MySQL database successfully created. |
+| `docs/screenshots/phase2-efs-apply.png` | Terminal confirmation verifying the EFS file system, security group, and mount targets created. |
 
 ![Phase 2 - VPC Plan Execution](docs/screenshots/phase2-vpc-plan.png)
 ![Phase 2 - EKS Cluster Apply](docs/screenshots/phase2-eks-apply.png)
