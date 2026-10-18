@@ -23,6 +23,7 @@ An enterprise-grade, highly available WordPress architecture deployed on **Amazo
 
 - [Phase 1: Repository Setup, Folder Structure & Version Control](#-phase-1-repository-setup-folder-structure--version-control)
 - [Phase 2: Infrastructure Provisioning (Terraform)](#-phase-2-infrastructure-provisioning-terraform)
+- [Phase 3: Kubernetes Orchestration & Storage Configuration](#-phase-3-kubernetes-orchestration--storage-configuration)
 
 ---
 
@@ -122,3 +123,49 @@ aws-eks-wordpress-enterprise/
 ![Phase 2 - EKS Cluster Apply](docs/screenshots/phase2-eks-apply.png)
 ![Phase 2 - Multi-AZ RDS Apply](docs/screenshots/phase2-rds-apply.png)
 ![Phase 2 - EFS Shared Storage Apply](docs/screenshots/phase2-efs-apply.png)
+
+---
+
+## 🚀 Phase 3: Kubernetes Orchestration & Storage Configuration
+
+### 🎯 Phase Objectives
+
+- Establish cluster credentials and authenticate `kubectl` against the newly provisioned Amazon EKS control plane.
+- Implement dynamic persistent volume storage backed by AWS EFS using the `efs.csi.aws.com` provisioner to support multi-pod shared media storage.
+- Secure database connectivity by authorizing MySQL port `3306` ingress from the EKS Node Security Group into the RDS Security Group.
+- Deploy stateful WordPress container workloads configured to use remote AWS RDS for database operations and AWS EFS for content storage.
+- Verify complete application initialization, schema migration, and administrative panel access.
+
+### 🛠️ Step-by-Step Orchestration Summary
+
+#### 1. Cluster Authentication & Storage Class Setup
+
+- Configured the local `kubeconfig` context for the Amazon EKS cluster using `aws eks update-kubeconfig`.
+- Deployed the `efs-sc` StorageClass utilizing `efs.csi.aws.com` in Access Point mode (`efs-ap`) pointing to EFS file system `fs-07cabe9138f6d4f49`.
+- Created `wordpress-efs-pvc` with `ReadWriteMany` (RWX) access mode, enabling simultaneous read and write access across auto-scaled pods.
+
+#### 2. Network Inbound Authorization & Security
+
+- Identified the EKS worker node security group (`sg-032bde26b637604c0`).
+- Updated the RDS security group (`sg-0ce4851962229a7d9`) with an inbound rule permitting MySQL/Aurora traffic (TCP port `3306`) sourced directly from the EKS worker nodes.
+
+#### 3. WordPress Workload Deployment & Verification
+
+- Created Kubernetes Secrets for secure RDS database credentials.
+- Applied `wordpress-deployment.yaml` and `wordpress-service.yaml`, creating an AWS Classic Load Balancer pointing to port `80` of the WordPress pods.
+- Established local tunneling via `kubectl port-forward` to test and complete the WordPress installation wizard.
+- Verified database writing and table schema creation on AWS RDS via successful login to `/wp-admin/`.
+
+### 📸 Portfolio Screenshots (Phase 3)
+
+| Screenshot File Name | Visual Proof / Content Description |
+| :--- | :--- |
+| `docs/screenshots/rds-security-group-inbound-rule.png` | AWS EC2/RDS Security Group configuration displaying the inbound rule for MySQL/Aurora traffic on port `3306` authorized from the EKS Node Security Group (`sg-032bde26b637604c0`). |
+| `docs/screenshots/wordpress-already-installed.png` | WordPress setup interface (`/wp-admin/install.php`) confirming successful connection to the AWS RDS MySQL instance and existing table schema initialization. |
+| `docs/screenshots/wordpress-admin-dashboard.png` | Active WordPress Administrative Dashboard (`/wp-admin/`) demonstrating complete application accessibility and system state integrity. |
+| `docs/screenshots/kubectl-cluster-resources.png` | Terminal output displaying `kubectl get pods -o wide`, `kubectl get pvc,pv`, and `kubectl get svc`, verifying running WordPress pods (`1/1 Running`), bound EFS PersistentVolumeClaim (`5Gi`, RWX), and active LoadBalancer. |
+
+![Phase 3 - RDS Security Group Inbound Rule](docs/screenshots/rds-security-group-inbound-rule.png)
+![Phase 3 - WordPress Install Page](docs/screenshots/wordpress-already-installed.png)
+![Phase 3 - WordPress Admin Dashboard](docs/screenshots/wordpress-admin-dashboard.png)
+![Phase 3 - kubectl Cluster Resources](docs/screenshots/kubectl-cluster-resources.png)
