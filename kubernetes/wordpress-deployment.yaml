@@ -49,6 +49,11 @@ spec:
                 define('WP_DEBUG', true);
                 define('WP_DEBUG_DISPLAY', true);
                 define('WP_DEBUG_LOG', true);
+                if (isset($_SERVER['HTTP_HOST'])) {
+                  $wp_scheme = (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') ? 'https' : 'http';
+                  define('WP_HOME', $wp_scheme . '://' . $_SERVER['HTTP_HOST']);
+                  define('WP_SITEURL', $wp_scheme . '://' . $_SERVER['HTTP_HOST']);
+                }
           volumeMounts:
             - name: wordpress-persistent-storage
               mountPath: /var/www/html
