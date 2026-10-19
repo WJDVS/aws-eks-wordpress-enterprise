@@ -42,13 +42,9 @@ spec:
                 secretKeyRef:
                   name: wordpress-db-secret
                   key: WORDPRESS_DB_PASSWORD
-            - name: WORDPRESS_DEBUG
-              value: "1"
+
             - name: WORDPRESS_CONFIG_EXTRA
               value: |
-                define('WP_DEBUG', true);
-                define('WP_DEBUG_DISPLAY', true);
-                define('WP_DEBUG_LOG', true);
                 if (isset($_SERVER['HTTP_HOST'])) {
                   $wp_scheme = (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') ? 'https' : 'http';
                   define('WP_HOME', $wp_scheme . '://' . $_SERVER['HTTP_HOST']);
