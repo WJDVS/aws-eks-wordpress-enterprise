@@ -29,11 +29,24 @@ module "eks" {
     }
   }
 
+  # Allow the EKS control plane to reach metrics-server (port 10251) on the nodes
+  node_security_group_additional_rules = {
+    ingress_cluster_metrics_server = {
+      description                   = "Cluster API to metrics-server"
+      protocol                      = "tcp"
+      from_port                     = 10251
+      to_port                       = 10251
+      type                          = "ingress"
+      source_cluster_security_group = true
+    }
+  }
+
   # EKS managed add-ons: AWS keeps these compatible with the cluster version
   cluster_addons = {
-    coredns    = { most_recent = true }
-    kube-proxy = { most_recent = true }
-    vpc-cni    = { most_recent = true }
+    coredns        = { most_recent = true }
+    kube-proxy     = { most_recent = true }
+    vpc-cni        = { most_recent = true }
+    metrics-server = { most_recent = true }
   }
 
   # EKS Managed Node Groups
