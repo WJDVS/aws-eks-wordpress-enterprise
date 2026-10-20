@@ -46,7 +46,10 @@ spec:
             - name: WORDPRESS_CONFIG_EXTRA
               value: |
                 if (isset($_SERVER['HTTP_HOST'])) {
-                  $wp_scheme = (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') ? 'https' : 'http';
+                  $cf_proto = isset($_SERVER['HTTP_CLOUDFRONT_FORWARDED_PROTO']) ? $_SERVER['HTTP_CLOUDFRONT_FORWARDED_PROTO'] : '';
+                  $lb_proto = isset($_SERVER['HTTP_X_FORWARDED_PROTO']) ? $_SERVER['HTTP_X_FORWARDED_PROTO'] : '';
+                  $wp_scheme = ($cf_proto === 'https' || $lb_proto === 'https') ? 'https' : 'http';
+                  if ($wp_scheme === 'https') { $_SERVER['HTTPS'] = 'on'; }
                   define('WP_HOME', $wp_scheme . '://' . $_SERVER['HTTP_HOST']);
                   define('WP_SITEURL', $wp_scheme . '://' . $_SERVER['HTTP_HOST']);
                 }
