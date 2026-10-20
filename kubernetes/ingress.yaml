@@ -11,6 +11,7 @@ metadata:
     alb.ingress.kubernetes.io/success-codes: "200,301,302"
     alb.ingress.kubernetes.io/load-balancer-name: wordpress-prod-alb
     alb.ingress.kubernetes.io/wafv2-acl-arn: arn:aws:wafv2:us-east-1:891612560987:regional/webacl/aws-eks-wordpress-waf/a40fec35-f50e-4893-b149-982b9624e57c
+    alb.ingress.kubernetes.io/security-group-prefix-lists: pl-3b927c52
 spec:
   ingressClassName: alb
   rules:
