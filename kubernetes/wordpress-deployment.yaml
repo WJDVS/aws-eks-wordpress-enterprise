@@ -5,7 +5,7 @@ metadata:
   labels:
     app: wordpress
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: wordpress
@@ -14,6 +14,13 @@ spec:
       labels:
         app: wordpress
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: wordpress
       containers:
         - name: wordpress
           image: wordpress:latest
@@ -42,7 +49,6 @@ spec:
                 secretKeyRef:
                   name: wordpress-db-secret
                   key: WORDPRESS_DB_PASSWORD
-
             - name: WORDPRESS_CONFIG_EXTRA
               value: |
                 if (isset($_SERVER['HTTP_HOST'])) {
@@ -60,4 +66,3 @@ spec:
         - name: wordpress-persistent-storage
           persistentVolumeClaim:
             claimName: wordpress-efs-pvc
-                   
