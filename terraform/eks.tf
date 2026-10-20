@@ -29,6 +29,13 @@ module "eks" {
     }
   }
 
+  # EKS managed add-ons: AWS keeps these compatible with the cluster version
+  cluster_addons = {
+    coredns    = { most_recent = true }
+    kube-proxy = { most_recent = true }
+    vpc-cni    = { most_recent = true }
+  }
+
   # EKS Managed Node Groups
   eks_managed_node_groups = {
     wordpress_nodes = {
