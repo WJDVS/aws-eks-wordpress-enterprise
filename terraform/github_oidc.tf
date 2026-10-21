@@ -1,5 +1,5 @@
 locals {
-  github_repo = "WJDVS/aws-eks-wordpress-enterprise"
+  github_repo = "WJDVS@201044941/aws-eks-wordpress-enterprise@1423706375"
 }
 
 # Tell AWS to trust identity tokens issued by GitHub Actions.
