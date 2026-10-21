@@ -26,8 +26,8 @@ The diagram shows the **target architecture**. This table tracks what is built t
 | Horizontal Pod Autoscaler, 2+ replicas across zones, PodDisruptionBudget | ✅ Implemented |
 | Amazon ElastiCache for Redis (WordPress object cache) | ✅ Implemented (Multi-AZ replication group) |
 | Amazon S3 media offload served through CloudFront | ✅ Implemented (private bucket, CloudFront OAC, IRSA) |
-| Terraform Cloud / remote state | 🔜 Planned |
-| GitHub Actions CI/CD | 🔜 Planned |
+| Terraform remote state (HCP Terraform) | ✅ Implemented (state stored remotely, locked, versioned) |
+| GitHub Actions CI/CD | ✅ Implemented (plan on pull requests, approval-gated apply, OIDC to AWS with no stored keys) |
 
 ### 🧰 Technology Stack
 
@@ -44,7 +44,8 @@ The diagram shows the **target architecture**. This table tracks what is built t
 | **Storage** | Amazon EFS for persistent shared WordPress content, Amazon S3 (private bucket) for offloaded media |
 | **Caching** | Amazon ElastiCache for Redis 7.1 (WordPress object cache through the Redis Object Cache plugin and Predis), Amazon CloudFront for media |
 | **Pod-to-AWS access** | IAM Roles for Service Accounts (IRSA), so pods use temporary credentials with no stored keys |
-| **CI/CD** | GitHub Actions (planned) |
+| **Remote state** | HCP Terraform (state storage and locking; execution stays local or in GitHub Actions) |
+| **CI/CD** | GitHub Actions with OpenID Connect (OIDC) federation to AWS, two IAM roles (read-only plan, approval-gated apply) |
 
 ---
 
@@ -56,6 +57,7 @@ The diagram shows the **target architecture**. This table tracks what is built t
 - [Phase 4: Ingress, Load Balancing & Security](#-phase-4-ingress-load-balancing--security)
 - [Phase 5: Scalability & Resilience](#-phase-5-scalability--resilience)
 - [Phase 6: Performance (Redis Object Cache & S3 Media Offload)](#-phase-6-performance-redis-object-cache--s3-media-offload)
+- [Phase 7: Automation (Remote State & CI/CD)](#-phase-7-automation-remote-state--cicd)
 - [Known Limitations and Next Improvements](#-known-limitations-and-next-improvements)
 - [Roadmap](#-roadmap)
 
@@ -74,7 +76,8 @@ The diagram shows the **target architecture**. This table tracks what is built t
 
 ```text
 aws-eks-wordpress-enterprise/
-├── .github/workflows/          # CI/CD GitHub Actions pipelines (planned)
+├── .github/workflows/
+│   └── terraform.yml           # CI/CD: fmt, validate, plan on PRs; approval-gated apply on main
 ├── docs/screenshots/           # Visual portfolio documentation
 ├── terraform/                  # Terraform Infrastructure as Code
 │   ├── main.tf                 # Core provider configuration
@@ -91,6 +94,7 @@ aws-eks-wordpress-enterprise/
 │   ├── redis.tf                # ElastiCache Redis replication group and security group
 │   ├── s3.tf                   # Private S3 bucket for WordPress media
 │   ├── irsa_wordpress.tf       # IAM role (IRSA) letting WordPress pods use the media bucket
+│   ├── github_oidc.tf          # GitHub OIDC provider and the plan/apply IAM roles for CI/CD
 │   └── .terraform.lock.hcl     # Provider version lock file
 ├── kubernetes/                 # Kubernetes deployment manifests
 │   ├── storage-class.yaml      # EFS StorageClass (efs.csi.aws.com)
@@ -496,6 +500,81 @@ Upload: WordPress pod ──(IRSA role)──▶ S3 bucket
 
 ---
 
+## 🤖 Phase 7: Automation (Remote State & CI/CD)
+
+### 🎯 Phase Objectives
+
+- Move Terraform state off the laptop into a remote, locked, versioned store (HCP Terraform).
+- Run `terraform fmt`, `validate` and `plan` automatically on every pull request.
+- Apply to AWS only from `main`, only after a human approves, with no long-lived AWS keys anywhere.
+
+### 🛠️ Implementation Steps
+
+#### 1. Remote state in HCP Terraform
+
+- Added a `cloud` block to `terraform/main.tf` (organization and workspace) and ran `terraform init`, which copied the existing state (103 resources) to HCP Terraform. A dated backup of the local state was kept until the migration was verified, and the local state file was then removed.
+- The workspace **execution mode is Local**: HCP only stores and locks the state, while plans and applies run on my laptop or in GitHub Actions. This keeps AWS credentials out of HCP.
+- A clean `terraform plan` after migration confirmed that nothing changed.
+
+#### 2. GitHub-to-AWS trust with OIDC (`github_oidc.tf`)
+
+- Created an IAM OpenID Connect provider for `token.actions.githubusercontent.com`. Each workflow run receives a short-lived signed token from GitHub, and AWS exchanges it for temporary credentials. No access keys are stored in GitHub.
+- Two IAM roles with different trust conditions:
+  - **Plan role** (`ReadOnlyAccess`): assumable from pull requests and `main`.
+  - **Apply role** (`AdministratorAccess`): assumable only from the `production` environment, which requires a manual approval.
+- The role ARNs are stored as repository **variables** (not secrets, since they are not sensitive). The database password and the HCP token are repository **secrets**.
+
+#### 3. The workflow (`.github/workflows/terraform.yml`)
+
+- **Pull requests:** `fmt -check`, `init`, `validate`, `plan`, using the read-only role.
+- **Push to `main`:** the same checks, then an **Apply** job that waits for approval in the `production` environment before running `terraform apply`.
+- `concurrency` ensures only one run touches the state at a time, and `permissions: id-token: write` lets the job request the OIDC token.
+
+### 🧯 Problems Found and Fixed
+
+#### AWS rejected the GitHub token ("Not authorized to perform sts:AssumeRoleWithWebIdentity")
+
+- AWS gives this same generic message for any trust mismatch. A temporary debug step that printed the token's claims showed GitHub now puts **immutable numeric IDs** in the subject, for example `repo:<owner>@<id>/<repo>@<id>:pull_request`, instead of plain names. The role trust conditions were updated to match, applied locally first, and the debug step was then removed.
+
+#### `terraform fmt -check` failed in CI
+
+- `vpc.tf` used inconsistent indentation. Formatting it with `terraform fmt` fixed the check, with no value changes.
+
+#### The plan differed between my laptop and CI
+
+- The EKS module adds whoever runs Terraform to the KMS key policy, so CI saw a one-resource change that the laptop did not. Pinning `kms_key_administrators` to the admin user and the apply role made the plan identical everywhere, and CI now reports **"No changes"**.
+
+### ✅ Verification
+
+- A pull request ran the checks and showed a plan with no changes.
+- After merging to `main`, the apply job paused at the approval gate. After approval it finished with `Apply complete! Resources: 0 added, 0 changed, 0 destroyed.`, which proves the full chain: OIDC to AWS, remote state, refresh, and comparison.
+
+### 📸 Portfolio Screenshots (Phase 7)
+
+| Screenshot File Name | Visual Proof / Content Description |
+| :--- | :--- |
+| `docs/screenshots/phase7-hcp-workspace-settings.png` | HCP Terraform workspace with execution mode set to Local. |
+| `docs/screenshots/phase7-hcp-state-migrated.png` | HCP Terraform workspace showing the migrated state and its resources. |
+| `docs/screenshots/phase7-github-environment.png` | The `production` environment with required reviewers. |
+| `docs/screenshots/phase7-github-secrets.png` | Repository secrets (names only, values hidden). |
+| `docs/screenshots/phase7-github-variables.png` | Repository variables holding the role ARNs. |
+| `docs/screenshots/phase7-actions-pr-plan-success.png` | The pull-request plan step finishing with no changes. |
+| `docs/screenshots/phase7-actions-run-summary.png` | Workflow run summary. |
+| `docs/screenshots/phase7-actions-steps-green.png` | All validation and plan steps green. |
+| `docs/screenshots/phase7-actions-apply-success.png` | Approved apply job finishing with 0 added, 0 changed, 0 destroyed. |
+
+![Phase 7 - HCP Workspace Settings](docs/screenshots/phase7-hcp-workspace-settings.png)
+![Phase 7 - State Migrated](docs/screenshots/phase7-hcp-state-migrated.png)
+![Phase 7 - GitHub Environment](docs/screenshots/phase7-github-environment.png)
+![Phase 7 - GitHub Secrets](docs/screenshots/phase7-github-secrets.png)
+![Phase 7 - GitHub Variables](docs/screenshots/phase7-github-variables.png)
+![Phase 7 - Pull Request Plan](docs/screenshots/phase7-actions-pr-plan-success.png)
+![Phase 7 - Run Summary](docs/screenshots/phase7-actions-run-summary.png)
+![Phase 7 - Steps Green](docs/screenshots/phase7-actions-steps-green.png)
+![Phase 7 - Apply Success](docs/screenshots/phase7-actions-apply-success.png)
+
+---
+
 ## ⚠️ Known Limitations and Next Improvements
 
 **Current limitations**
@@ -504,7 +583,6 @@ Upload: WordPress pod ──(IRSA role)──▶ S3 bucket
 - **Minimum TLS version is fixed at TLS 1.0** because the default CloudFront certificate is used. A custom domain and certificate would allow requiring TLS 1.2 or newer.
 - **WAF request logging is off.** Metrics and sampled requests are enabled. Full logging to CloudWatch or S3 would add cost.
 - **Secrets are Kubernetes Secrets**, which are base64-encoded. AWS Secrets Manager with automatic rotation is the stronger option.
-- **Terraform state is local.** Remote state (Terraform Cloud or an S3 backend) is required before CI/CD (planned in Phase 7).
 - **The HPA scales pods, not nodes.** The node group is a fixed 3–6 range managed by Terraform. A node autoscaler (Cluster Autoscaler or Karpenter) would grow it automatically.
 - **CPU-based autoscaling suits CPU-bound work.** WordPress here is mostly I/O-bound (database and EFS), so caching and offload (Phase 6) matter more than adding replicas.
 - **Redis traffic is not encrypted in transit and has no auth token.** Encryption at rest is on and access is limited by security group to the worker nodes. In-transit TLS plus an auth token would harden it.
@@ -512,6 +590,13 @@ Upload: WordPress pod ──(IRSA role)──▶ S3 bucket
 - **Large uploads can hit CloudFront's 30-second origin timeout** and WordPress's image-processing memory limits. A very large photo failed to upload; a small image worked. Raising the CloudFront origin response timeout and the pod and PHP memory limits would help.
 - **Media is kept on both EFS and S3** (`remove-local-file` is off), which is safe but uses more storage.
 - **The media bucket name contains the AWS account ID.** This is not a secret, but it is visible in the Terraform and the screenshots.
+- **The CI apply role has AdministratorAccess.** Terraform manages IAM, VPC, EKS and more, so a narrow policy is hard to write. The risk is limited by trust conditions: only the `production` environment of this repository can assume it, and every apply needs a manual approval. A scoped-down policy would be the next step.
+- **CI covers Terraform only.** The Kubernetes manifests are still applied manually with `kubectl`.
+- **The repository is public, so workflow logs are public.** Plan output (resource names and ARNs, including the AWS account ID) is visible. Secrets are masked by GitHub, and the database password is passed as a repository secret.
+- **The HCP Terraform API token used by CI expires** (30 days) and must be replaced in the repository secrets when it does. Execution mode is Local, so HCP only stores state.
+- **Workflow actions are pinned by version tag, not commit SHA**, and Dependabot is not enabled. GitHub currently reports a Node.js 20 deprecation notice for some actions and an `ubuntu-latest` migration notice.
+- **An old, since-rotated database password remains in git history** (`rds.tf`). It no longer works, but a history rewrite would be required to remove it.
+- **Commit author email is public in older commits.** Commits before the switch to a GitHub noreply address carry a personal email address.
 - **Cost awareness:** the EKS control plane, worker nodes, NAT gateway, ALB, Multi-AZ RDS, and WAF all accrue hourly charges while the environment runs.
 - **Teardown order:** delete the Ingress first (so the controller removes the ALB and detaches its security groups), empty the media bucket (`aws s3 rm s3://<bucket> --recursive`, because the bucket has no `force_destroy`), then run `terraform destroy` for the remaining infrastructure.
 
@@ -530,5 +615,5 @@ Upload: WordPress pod ──(IRSA role)──▶ S3 bucket
 | :--- | :--- | :--- | :--- |
 | **Phase 5** | Scalability | metrics-server, HPA, 2+ replicas across zones, PDB, EKS 1.35, node group 3–6 | ✅ Complete |
 | **Phase 6** | Performance | Amazon ElastiCache for Redis (object cache), Amazon S3 media offload served through CloudFront, IRSA | ✅ Complete |
-| **Phase 7** | Automation | Remote Terraform state (Terraform Cloud), GitHub Actions CI/CD | 🔜 Planned |
+| **Phase 7** | Automation | Remote Terraform state (HCP Terraform), GitHub Actions CI/CD with OIDC and an approval gate | ✅ Complete |
 | **Final** | Documentation | Portfolio documentation and final end-to-end verification | 🔜 Planned |
