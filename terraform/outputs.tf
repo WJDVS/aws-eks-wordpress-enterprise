@@ -15,3 +15,7 @@ output "redis_primary_endpoint" {
 output "media_bucket_name" {
   value = aws_s3_bucket.media.id
 }
+
+output "wordpress_media_role_arn" {
+  value = aws_iam_role.wordpress_media.arn
+}
