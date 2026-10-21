@@ -29,6 +29,13 @@ module "eks" {
     }
   }
 
+  # Fixed KMS key administrators, so the key policy does not change depending on who runs Terraform
+  # (laptop admin user vs. the CI apply role).
+  kms_key_administrators = [
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/aws-eks-wordpress-admin",
+    aws_iam_role.github_apply.arn,
+  ]
+
   # Allow the EKS control plane to reach metrics-server (port 10251) on the nodes
   node_security_group_additional_rules = {
     ingress_cluster_metrics_server = {
