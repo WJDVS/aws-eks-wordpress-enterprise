@@ -52,9 +52,9 @@ module "eks" {
   # EKS Managed Node Groups
   eks_managed_node_groups = {
     wordpress_nodes = {
-      min_size     = 2
-      max_size     = 4
-      desired_size = 2
+      min_size     = 3
+      max_size     = 6
+      desired_size = 3
 
       instance_types = ["t3.medium"]
       subnet_ids     = module.vpc.private_subnets
