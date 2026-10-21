@@ -15,14 +15,15 @@ The diagram shows the **target architecture**. This table tracks what is built t
 | Component | Status |
 | :--- | :--- |
 | VPC, public/private subnets, NAT, Multi-AZ layout | ✅ Implemented |
-| Amazon EKS cluster with managed node group | ✅ Implemented (2–4 nodes; target 3–6) |
+| Amazon EKS cluster (Kubernetes 1.35) with managed node group | ✅ Implemented (3–6 `t3.medium` nodes) |
+| EKS managed add-ons (CoreDNS, kube-proxy, VPC CNI, metrics-server) | ✅ Implemented |
 | Amazon RDS for MySQL (Multi-AZ) | ✅ Implemented |
 | Amazon EFS shared storage | ✅ Implemented |
 | Application Load Balancer via AWS Load Balancer Controller + Ingress | ✅ Implemented |
 | AWS WAF (managed rule groups) | ✅ Implemented |
 | Amazon CloudFront (HTTPS front door) | ✅ Implemented (S3 origin not yet) |
 | Kubernetes Secrets and credential rotation | ✅ Implemented |
-| Horizontal Pod Autoscaler and 2+ replicas | 🔜 Planned |
+| Horizontal Pod Autoscaler, 2+ replicas across zones, PodDisruptionBudget | ✅ Implemented |
 | Amazon ElastiCache for Redis | 🔜 Planned |
 | Amazon S3 media offload served through CloudFront | 🔜 Planned |
 | Terraform Cloud / remote state | 🔜 Planned |
@@ -34,7 +35,8 @@ The diagram shows the **target architecture**. This table tracks what is built t
 | :--- | :--- |
 | **Cloud Provider** | AWS (`us-east-1`) |
 | **Infrastructure as Code** | Terraform (VPC, EKS, RDS, EFS, WAF, CloudFront) |
-| **Container Orchestration** | Kubernetes (EKS Managed Node Groups) |
+| **Container Orchestration** | Kubernetes 1.35 (EKS Managed Node Groups, managed add-ons) |
+| **Autoscaling** | Horizontal Pod Autoscaler driven by metrics-server |
 | **Edge / HTTPS** | Amazon CloudFront (default `*.cloudfront.net` certificate) |
 | **Web Application Firewall** | AWS WAFv2 (AWS managed rule groups) attached to the ALB |
 | **Load Balancing** | Application Load Balancer managed by the AWS Load Balancer Controller |
@@ -50,6 +52,8 @@ The diagram shows the **target architecture**. This table tracks what is built t
 - [Phase 2: Infrastructure Provisioning (Terraform)](#-phase-2-infrastructure-provisioning-terraform)
 - [Phase 3: Kubernetes Orchestration & Storage Configuration](#-phase-3-kubernetes-orchestration--storage-configuration)
 - [Phase 4: Ingress, Load Balancing & Security](#-phase-4-ingress-load-balancing--security)
+- [Phase 5: Scalability & Resilience](#-phase-5-scalability--resilience)
+- [Known Limitations and Next Improvements](#-known-limitations-and-next-improvements)
 - [Roadmap](#-roadmap)
 
 ---
@@ -75,7 +79,7 @@ aws-eks-wordpress-enterprise/
 │   ├── outputs.tf              # Connection endpoints and outputs
 │   ├── vpc.tf                  # Networking, subnets, and routing
 │   ├── security.tf             # Security groups and network access rules
-│   ├── eks.tf                  # EKS cluster and compute nodes
+│   ├── eks.tf                  # EKS cluster, managed add-ons, and compute nodes
 │   ├── rds.tf                  # Multi-AZ MySQL database
 │   ├── efs.tf                  # Elastic File System storage
 │   ├── waf.tf                  # WAFv2 Web ACL with managed rule groups
@@ -88,7 +92,8 @@ aws-eks-wordpress-enterprise/
 │   ├── wordpress-deployment.yaml
 │   ├── wordpress-service.yaml
 │   ├── ingress.yaml            # ALB Ingress (WAF + CloudFront-only access)
-│   └── hpa.yaml                # Horizontal Pod Autoscaler (planned)
+│   ├── hpa.yaml                # Horizontal Pod Autoscaler (2–5 replicas, 70% CPU)
+│   └── wordpress-pdb.yaml      # PodDisruptionBudget (keep 1 pod available)
 ├── iam_policy.json             # AWS Load Balancer Controller IAM policy
 ├── trust-policy.json           # IAM trust policy
 ├── .gitignore
@@ -115,7 +120,7 @@ aws-eks-wordpress-enterprise/
 
 - Configure core AWS provider settings and reusable input variables (`main.tf`, `variables.tf`).
 - Provision a highly available Multi-AZ Virtual Private Cloud (`vpc.tf`) featuring public and private subnets, internet gateways, and NAT gateways.
-- Deploy an enterprise Amazon EKS cluster (`eks.tf`) running version `1.31` with managed EC2 node groups across private subnets.
+- Deploy an enterprise Amazon EKS cluster (`eks.tf`) running version `1.31` with managed EC2 node groups across private subnets. *(Upgraded to `1.35` and resized to 3–6 nodes in Phase 5.)*
 - Set up a highly available, Multi-AZ Amazon RDS MySQL database (`rds.tf`) for application data persistence.
 - Implement an encrypted Amazon EFS file system (`efs.tf`) with mount targets across all private subnets to provide shared storage for WordPress uploads.
 
@@ -137,8 +142,8 @@ aws-eks-wordpress-enterprise/
 
 #### 3. Kubernetes Cluster & Compute (`eks.tf`)
 
-- Deployed the Amazon EKS cluster `aws-eks-wordpress-cluster` on Kubernetes `v1.31`.
-- Configured EKS Managed Node Groups with `t3.medium` instances across private subnets, with auto-scaling boundaries of minimum 2, desired 2, and maximum 4 nodes.
+- Deployed the Amazon EKS cluster `aws-eks-wordpress-cluster` on Kubernetes `v1.31`. *(Now `v1.35`; see Phase 5.)*
+- Configured EKS Managed Node Groups with `t3.medium` instances across private subnets, with auto-scaling boundaries of minimum 2, desired 2, and maximum 4 nodes. *(Now 3 / 3 / 6; see Phase 5.)*
 
 #### 4. Relational Database (`rds.tf`)
 
@@ -227,7 +232,7 @@ aws-eks-wordpress-enterprise/
 ### 🏗️ Traffic Flow
 
 ```text
-Browser ──HTTPS──▶ CloudFront ──HTTP──▶ ALB (WAF attached) ──▶ WordPress pod ──▶ RDS MySQL / EFS
+Browser ──HTTPS──▶ CloudFront ──HTTP──▶ ALB (WAF attached) ──▶ WordPress pods ──▶ RDS MySQL / EFS
 ```
 
 ### 🛠️ Step-by-Step Summary
@@ -274,7 +279,7 @@ Browser ──HTTPS──▶ CloudFront ──HTTP──▶ ALB (WAF attached) �
 | `docs/screenshots/phase4-aws-load-balancer.png` | Application Load Balancer created by the AWS Load Balancer Controller from the Ingress. |
 | `docs/screenshots/phase4-wordpress-via-alb.png` | WordPress served through the ALB before CloudFront was added. |
 | `docs/screenshots/phase4-wordpress-debug-off.png` | WordPress after debug display was disabled. |
-| `docs/screenshots/phase4-waf-test-403.png` | Terminal showing `403` responses to script injection, path traversal, and SQL injection patterns. |
+| `docs/screenshots/phase4-waf-test-403.png` | Terminal showing `403` responses to script injection, path traversal, and SQL injection patterns, with `200` for a normal request. |
 | `docs/screenshots/phase4-waf-blocked-requests.png` | WAF console showing blocked requests and the rule groups that matched. |
 | `docs/screenshots/phase4-efs-mount.png` | `df -h` inside a freshly started pod showing the EFS mount at `/var/www/html`. |
 | `docs/screenshots/phase4-cloudfront-https.png` | WordPress served over HTTPS (padlock) from the CloudFront address. |
@@ -291,25 +296,105 @@ Browser ──HTTPS──▶ CloudFront ──HTTP──▶ ALB (WAF attached) �
 ![Phase 4 - WordPress Admin over HTTPS](docs/screenshots/phase4-wp-admin-https.png)
 ![Phase 4 - ALB Locked to CloudFront](docs/screenshots/phase4-alb-locked-to-cloudfront.png)
 
-### ⚠️ Known Limitations and Next Improvements
+---
+
+## ⚖️ Phase 5: Scalability & Resilience
+
+### 🎯 Phase Objectives
+
+- Move the cluster off an expiring Kubernetes version (`1.31`, in extended support) to a supported one (`1.35`) **without downtime**.
+- Run WordPress as **two or more replicas spread across Availability Zones**, protected by a PodDisruptionBudget, so node maintenance and failures do not interrupt the site.
+- Install **metrics-server** and make the **Horizontal Pod Autoscaler (HPA)** work, then prove it with a load test.
+- Pin the WordPress image so every replica runs the same version.
+- Match the node group to the architecture diagram (3–6 nodes).
+
+### 🛠️ Step-by-Step Summary
+
+#### 1. EKS Managed Add-ons
+
+- CoreDNS, kube-proxy, and the VPC CNI were running as plain, self-managed Kubernetes objects, so they did **not** follow cluster upgrades (kube-proxy was a minor version behind).
+- Adopted them as **EKS managed add-ons** through the Terraform module (`cluster_addons` with `most_recent = true`, resolving conflicts with `OVERWRITE`). The plan showed three creates and no destroys, and the site stayed up.
+
+#### 2. High Availability for WordPress
+
+- Scaled the Deployment to **2 replicas** and raised the HPA minimum to 2.
+- Added a `topologySpreadConstraints` rule on `topology.kubernetes.io/zone` (`maxSkew: 1`) so replicas land in different Availability Zones.
+  - *Lesson learned:* the first attempt used `whenUnsatisfiable: ScheduleAnyway`, which is only a preference. Both pods landed on the same node because the image was already cached there. Changing it to `DoNotSchedule` made the spread a requirement, and verification showed one pod per node and per zone.
+- Added a **PodDisruptionBudget** (`wordpress-pdb`, `minAvailable: 1`) so a node drain can never remove both replicas at once. It was added only after two replicas were running, because with a single replica the budget would have blocked every drain.
+
+#### 3. Zero-Downtime EKS Upgrade (1.31 → 1.35)
+
+- **Why:** extended support bills the control plane at about $0.60/hr instead of $0.10/hr, and AWS automatically upgrades clusters at the end of extended support.
+- **How:** EKS allows only one minor version at a time, so the cluster went `1.31 → 1.32 → 1.33 → 1.34 → 1.35`. Each hop was a one-line `cluster_version` change followed by the same routine: `terraform plan` (review), `terraform apply`, then verify.
+- Each hop upgrades the control plane first, then replaces the managed nodes one at a time (new nodes on the new version, old ones drained), then updates the add-ons. The nodes already ran Amazon Linux 2023, so no AMI change was needed.
+- A watcher loop showed the CloudFront URL returning `200` throughout, because the two replicas and the PodDisruptionBudget kept one pod serving at all times.
+- Every hop ended with a clean `terraform plan` ("No changes") and a Git commit.
+
+#### 4. metrics-server and the Security Group Fix
+
+- Added `metrics-server` to the managed add-ons. The pods started, but the metrics API reported `False (FailedDiscoveryCheck)`: `context deadline exceeded` when the API server tried `https://<pod-ip>:10251`.
+- **Root cause:** the metrics-server add-on listens on TCP `10251`, and the node security group did not allow the control plane to reach that port.
+- **Fix:** added one least-privilege rule in `eks.tf` (`node_security_group_additional_rules`): TCP `10251`, source = the cluster security group only. The metrics API then became `True`, and `kubectl top` returned data.
+
+#### 5. Horizontal Pod Autoscaler and Load Test
+
+- HPA settings: `minReplicas: 2`, `maxReplicas: 5`, target **70% average CPU** (relative to the container's 100m request).
+- Generated load with a pod inside the cluster (parallel `wget` loops against the `wordpress` Service), so the test did not involve CloudFront or the WAF.
+- **Finding:** sustained load did **not** push CPU high. The pods spend most of their time waiting on the remote database (RDS) and network storage (EFS), not computing, so CPU-based scaling reacted only to short spikes. This is a real characteristic of WordPress on shared storage, and it is the reason for the Phase 6 work (Redis object cache and S3 media offload).
+- To demonstrate the mechanism anyway, the HPA target was **temporarily lowered to 10%** for the test. The HPA scaled **2 → 5 replicas**, spread across both nodes (3 + 2). After restoring the 70% target from Git (`kubectl apply -f kubernetes/hpa.yaml`) and stopping the load, it scaled back **5 → 2** after the stabilization period.
+
+#### 6. Pinned Image
+
+- Replaced `wordpress:latest` with `wordpress:7.1.3-php8.3-apache`, matching the version already running (WordPress 7.1.3, PHP 8.3). A moving tag could let new pods pull a different version than the existing ones while sharing the same files and database.
+
+#### 7. Node Group 3–6
+
+- Resized the managed node group to min 3 / desired 3 / max 6 to match the architecture. The EKS Terraform module ignores `desired_size` after creation, so the live group was resized once with the AWS CLI and `eks.tf` was then updated to match. `terraform plan` confirmed "No changes".
+
+### 📸 Portfolio Screenshots (Phase 5)
+
+| Screenshot File Name | Visual Proof / Content Description |
+| :--- | :--- |
+| `docs/screenshots/phase5-metrics-server.png` | Metrics API `AVAILABLE: True`, plus `kubectl top nodes` and `kubectl top pods` returning live CPU and memory. |
+| `docs/screenshots/phase5-hpa-scale-up.png` | HPA scaling from 2 to 5 replicas under load. *The target was temporarily lowered to 10% for this demonstration; the real target is 70%.* |
+| `docs/screenshots/phase5-hpa-pods.png` | `kubectl get hpa` and `kubectl get pods -o wide` at 5 replicas, spread across both nodes and Availability Zones. |
+| `docs/screenshots/phase5-hpa-scale-down.png` | HPA back at 2 replicas with the real 70% target after the load stopped. |
+
+![Phase 5 - metrics-server](docs/screenshots/phase5-metrics-server.png)
+![Phase 5 - HPA Scale Up](docs/screenshots/phase5-hpa-scale-up.png)
+![Phase 5 - HPA Pods Across Nodes](docs/screenshots/phase5-hpa-pods.png)
+![Phase 5 - HPA Scale Down](docs/screenshots/phase5-hpa-scale-down.png)
+
+---
+
+## ⚠️ Known Limitations and Next Improvements
+
+**Current limitations**
 
 - **CloudFront-to-ALB traffic is plain HTTP.** There is no custom domain, so there is no certificate for the ALB. A domain plus an ACM certificate would encrypt that leg.
 - **Minimum TLS version is fixed at TLS 1.0** because the default CloudFront certificate is used. A custom domain and certificate would allow requiring TLS 1.2 or newer.
-- **Single WordPress replica.** A Horizontal Pod Autoscaler and a second replica would remove the brief outage during pod restarts.
 - **WAF request logging is off.** Metrics and sampled requests are enabled. Full logging to CloudWatch or S3 would add cost.
-- **Secrets are Kubernetes Secrets**, which are base64-encoded. AWS Secrets Manager with automatic rotation is the next step.
-- **Terraform state is local.** Remote state (Terraform Cloud or an S3 backend) is required before CI/CD.
-- **The cluster runs Kubernetes 1.31 in EKS extended support**, which carries a higher control plane charge and ends with an automatic control plane upgrade. Moving to a version in standard support, either by upgrading one minor version at a time or by rebuilding, avoids the premium.
+- **Secrets are Kubernetes Secrets**, which are base64-encoded. AWS Secrets Manager with automatic rotation is the stronger option.
+- **Terraform state is local.** Remote state (Terraform Cloud or an S3 backend) is required before CI/CD (planned in Phase 7).
+- **The HPA scales pods, not nodes.** The node group is a fixed 3–6 range managed by Terraform. A node autoscaler (Cluster Autoscaler or Karpenter) would grow it automatically.
+- **CPU-based autoscaling suits CPU-bound work.** WordPress here is mostly I/O-bound (database and EFS), so caching and offload (Phase 6) matter more than adding replicas.
 - **Cost awareness:** the EKS control plane, worker nodes, NAT gateway, ALB, Multi-AZ RDS, and WAF all accrue hourly charges while the environment runs.
 - **Teardown order:** delete the Ingress first (so the controller removes the ALB and detaches its security groups), then run `terraform destroy` for the remaining infrastructure.
+
+**Optional hardening (documented, not built)**
+
+- Custom domain with ACM certificates (end-to-end TLS)
+- AWS Secrets Manager with rotation
+- WAF logging
+- Automatic node scaling (Cluster Autoscaler or Karpenter)
 
 ---
 
 ## 🗺️ Roadmap
 
-| Phase | Focus | Planned Work |
-| :--- | :--- | :--- |
-| **Phase 5** | Scalability | metrics-server, Horizontal Pod Autoscaler, 2+ WordPress replicas spread across both Availability Zones, node group sized 3–6 |
-| **Phase 6** | Performance | Amazon ElastiCache for Redis (object cache), Amazon S3 media offload served through CloudFront |
-| **Phase 7** | Automation | Remote Terraform state (Terraform Cloud), GitHub Actions CI/CD |
-| **Final** | Documentation | Portfolio documentation and final end-to-end verification |
+| Phase | Focus | Planned Work | Status |
+| :--- | :--- | :--- | :--- |
+| **Phase 5** | Scalability | metrics-server, HPA, 2+ replicas across zones, PDB, EKS 1.35, node group 3–6 | ✅ Complete |
+| **Phase 6** | Performance | Amazon ElastiCache for Redis (object cache), Amazon S3 media offload served through CloudFront | 🔜 Planned |
+| **Phase 7** | Automation | Remote Terraform state (Terraform Cloud), GitHub Actions CI/CD | 🔜 Planned |
+| **Final** | Documentation | Portfolio documentation and final end-to-end verification | 🔜 Planned |
