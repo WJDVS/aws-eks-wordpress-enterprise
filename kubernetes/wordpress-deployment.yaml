@@ -67,6 +67,21 @@ spec:
                 define('WP_REDIS_TIMEOUT', 1);
                 define('WP_REDIS_READ_TIMEOUT', 1);
                 define('WP_CACHE_KEY_SALT', 'wp_eks_');
+                define('AS3CF_SETTINGS', serialize(array(
+                  'provider' => 'aws',
+                  'use-server-roles' => true,
+                  'bucket' => 'aws-eks-wordpress-media-891612560987',
+                  'region' => 'us-east-1',
+                  'copy-to-s3' => true,
+                  'serve-from-s3' => true,
+                  'enable-object-prefix' => true,
+                  'object-prefix' => 'wp-content/uploads/',
+                  'use-yearmonth-folders' => true,
+                  'enable-delivery-domain' => true,
+                  'delivery-domain' => 'd370tqg69ng5sc.cloudfront.net',
+                  'force-https' => true,
+                  'remove-local-file' => false,
+                )));
           volumeMounts:
             - name: wordpress-persistent-storage
               mountPath: /var/www/html
