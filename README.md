@@ -8,9 +8,11 @@ An enterprise-grade, highly available WordPress architecture deployed on **Amazo
 
 ![AWS EKS Enterprise WordPress Architecture](docs/screenshots/architecture-diagram.png)
 
+> **Status: built, verified end to end, then torn down.** The environment was running on 2026-10-21 and was destroyed afterwards to stop AWS charges (about $10 a day). Everything is Infrastructure as Code, so `terraform apply` recreates it. The screenshots in `docs/screenshots/` are the record of it running, and the [Final Verification](#-final-verification-and-teardown) section shows the last checks.
+
 ### 📋 Implementation Status
 
-The diagram shows the **target architecture**. This table tracks what is built today.
+The diagram shows the **target architecture**. This table tracks what was built.
 
 | Component | Status |
 | :--- | :--- |
@@ -58,6 +60,7 @@ The diagram shows the **target architecture**. This table tracks what is built t
 - [Phase 5: Scalability & Resilience](#-phase-5-scalability--resilience)
 - [Phase 6: Performance (Redis Object Cache & S3 Media Offload)](#-phase-6-performance-redis-object-cache--s3-media-offload)
 - [Phase 7: Automation (Remote State & CI/CD)](#-phase-7-automation-remote-state--cicd)
+- [Final Verification and Teardown](#-final-verification-and-teardown)
 - [Known Limitations and Next Improvements](#-known-limitations-and-next-improvements)
 - [Roadmap](#-roadmap)
 
@@ -561,6 +564,7 @@ Upload: WordPress pod ──(IRSA role)──▶ S3 bucket
 | `docs/screenshots/phase7-actions-pr-plan-success.png` | The pull-request plan step finishing with no changes. |
 | `docs/screenshots/phase7-actions-run-summary.png` | Workflow run summary. |
 | `docs/screenshots/phase7-actions-steps-green.png` | All validation and plan steps green. |
+| `docs/screenshots/phase7-actions-approval-gate.png` | Apply job paused, waiting for a reviewer to approve the `production` deployment. |
 | `docs/screenshots/phase7-actions-apply-success.png` | Approved apply job finishing with 0 added, 0 changed, 0 destroyed. |
 
 ![Phase 7 - HCP Workspace Settings](docs/screenshots/phase7-hcp-workspace-settings.png)
@@ -571,7 +575,53 @@ Upload: WordPress pod ──(IRSA role)──▶ S3 bucket
 ![Phase 7 - Pull Request Plan](docs/screenshots/phase7-actions-pr-plan-success.png)
 ![Phase 7 - Run Summary](docs/screenshots/phase7-actions-run-summary.png)
 ![Phase 7 - Steps Green](docs/screenshots/phase7-actions-steps-green.png)
+![Phase 7 - Approval Gate](docs/screenshots/phase7-actions-approval-gate.png)
 ![Phase 7 - Apply Success](docs/screenshots/phase7-actions-apply-success.png)
+
+---
+
+## 🏁 Final Verification and Teardown
+
+### ✅ End-to-End Verification
+
+Before tearing the environment down, one pass confirmed that every part of the architecture was working together:
+
+- **Compute:** 3 worker nodes `Ready` on Kubernetes 1.35 across two Availability Zones, and 2 WordPress pods `Running` with no restarts, on nodes in different zones.
+- **Scaling and resilience:** the HPA reported 15% CPU against a 70% target (2 to 5 replicas), and the PodDisruptionBudget kept at least 1 pod available.
+- **Edge:** the CloudFront URL returned `HTTP 200` and the WordPress site loaded over HTTPS in a private browser window.
+- **Infrastructure as Code:** `terraform plan` against the remote state reported **"No changes"**, and the CI pipeline's approved apply finished with 0 added, 0 changed, 0 destroyed.
+
+### 🔒 Security Recheck of the Public Repository
+
+- No state files, `.tfvars`, key files or credential files are tracked.
+- A scan of the **entire git history** found no AWS access keys and no private keys.
+- Every mention of a password in the code is a variable name or a reference to a Kubernetes or GitHub secret. No real value is committed.
+- GitHub secret scanning reports **no secrets found**.
+- Known leftovers are recorded under Known Limitations (an old, rotated database password in history, and a personal email in older commits).
+
+### 🧹 Teardown
+
+Teardown order matters, because the load balancer and the bucket are not removed by Terraform on its own:
+
+1. `kubectl delete -f kubernetes/ingress.yaml` so the AWS Load Balancer Controller removes the ALB and its security groups. A check with `aws elbv2 describe-load-balancers` then returned nothing.
+2. Emptied the media bucket with `aws s3 rm s3://<bucket> --recursive`. Versioning was never enabled, so no old versions were left behind.
+3. `terraform destroy` removed the remaining infrastructure from the remote state.
+
+The CI roles and the OIDC provider live in the same Terraform state, so they are destroyed too. To bring everything back, run `terraform apply` once locally, which recreates them, and the pipeline works again.
+
+### 📸 Portfolio Screenshots (Final)
+
+| Screenshot File Name | Visual Proof / Content Description |
+| :--- | :--- |
+| `docs/screenshots/final-site-live.png` | The live WordPress site served through CloudFront over HTTPS. |
+| `docs/screenshots/final-cluster-health.png` | Nodes by zone, pods, HPA, PDB, Ingress, and a `200` response from CloudFront. |
+| `docs/screenshots/final-terraform-no-changes.png` | `terraform plan` against the remote state reporting no changes. |
+| `docs/screenshots/final-secret-scanning-clean.png` | GitHub secret scanning reporting no secrets found. |
+
+![Final - Live Site](docs/screenshots/final-site-live.png)
+![Final - Cluster Health](docs/screenshots/final-cluster-health.png)
+![Final - Terraform No Changes](docs/screenshots/final-terraform-no-changes.png)
+![Final - Secret Scanning Clean](docs/screenshots/final-secret-scanning-clean.png)
 
 ---
 
@@ -616,4 +666,4 @@ Upload: WordPress pod ──(IRSA role)──▶ S3 bucket
 | **Phase 5** | Scalability | metrics-server, HPA, 2+ replicas across zones, PDB, EKS 1.35, node group 3–6 | ✅ Complete |
 | **Phase 6** | Performance | Amazon ElastiCache for Redis (object cache), Amazon S3 media offload served through CloudFront, IRSA | ✅ Complete |
 | **Phase 7** | Automation | Remote Terraform state (HCP Terraform), GitHub Actions CI/CD with OIDC and an approval gate | ✅ Complete |
-| **Final** | Documentation | Portfolio documentation and final end-to-end verification | 🔜 Planned |
+| **Final** | Documentation | Portfolio documentation, final end-to-end verification, security recheck, teardown | ✅ Complete |
