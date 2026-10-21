@@ -607,6 +607,9 @@ Teardown order matters, because the load balancer and the bucket are not removed
 2. Emptied the media bucket with `aws s3 rm s3://<bucket> --recursive`. Versioning was never enabled, so no old versions were left behind.
 3. `terraform destroy` removed the remaining infrastructure from the remote state.
 
+   - **A manual rule blocked the first destroy.** The node security group could not be deleted because the VPC's `default` security group had an extra inbound rule (TCP 3306, MySQL) that referenced it and was not managed by Terraform. It was the database-access rule added by hand in Phase 3. Terraform retried for about 15 minutes and failed with `DependencyViolation`. Finding the rule with `aws ec2 describe-security-groups --filters Name=ip-permission.group-id,Values=<node-sg>`, confirming the VPC was the project VPC, and revoking that single rule let a second `terraform destroy` finish. Rules added outside Terraform are invisible to it, so a teardown has to look for them.
+4. Ran a leftover check with the AWS CLI (EKS, RDS, ElastiCache, EFS, NAT gateways, Elastic IPs, load balancers, WAF, CloudFront, S3). Everything from this project was gone.
+
 The CI roles and the OIDC provider live in the same Terraform state, so they are destroyed too. To bring everything back, run `terraform apply` once locally, which recreates them, and the pipeline works again.
 
 ### 📸 Portfolio Screenshots (Final)
@@ -661,8 +664,12 @@ The CI roles and the OIDC provider live in the same Terraform state, so they are
 
 ## 🗺️ Roadmap
 
-| Phase | Focus | Planned Work | Status |
+| Phase | Focus | Work Delivered | Status |
 | :--- | :--- | :--- | :--- |
+| **Phase 1** | Foundation | GitHub repository, folder structure, version control, screenshot tracking | ✅ Complete |
+| **Phase 2** | Infrastructure | Terraform: Multi-AZ VPC, EKS cluster and managed node group, RDS MySQL (Multi-AZ), EFS | ✅ Complete |
+| **Phase 3** | Orchestration | `kubectl` access, EFS storage through the CSI driver, database connectivity, first WordPress deployment | ✅ Complete |
+| **Phase 4** | Ingress and Security | ALB through the AWS Load Balancer Controller, Kubernetes Secret and password rotation, WAFv2, CloudFront HTTPS front door | ✅ Complete |
 | **Phase 5** | Scalability | metrics-server, HPA, 2+ replicas across zones, PDB, EKS 1.35, node group 3–6 | ✅ Complete |
 | **Phase 6** | Performance | Amazon ElastiCache for Redis (object cache), Amazon S3 media offload served through CloudFront, IRSA | ✅ Complete |
 | **Phase 7** | Automation | Remote Terraform state (HCP Terraform), GitHub Actions CI/CD with OIDC and an approval gate | ✅ Complete |
