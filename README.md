@@ -21,11 +21,11 @@ The diagram shows the **target architecture**. This table tracks what is built t
 | Amazon EFS shared storage | ✅ Implemented |
 | Application Load Balancer via AWS Load Balancer Controller + Ingress | ✅ Implemented |
 | AWS WAF (managed rule groups) | ✅ Implemented |
-| Amazon CloudFront (HTTPS front door) | ✅ Implemented (S3 origin not yet) |
+| Amazon CloudFront (HTTPS front door) | ✅ Implemented (ALB origin plus a private S3 media origin) |
 | Kubernetes Secrets and credential rotation | ✅ Implemented |
 | Horizontal Pod Autoscaler, 2+ replicas across zones, PodDisruptionBudget | ✅ Implemented |
-| Amazon ElastiCache for Redis | 🔜 Planned |
-| Amazon S3 media offload served through CloudFront | 🔜 Planned |
+| Amazon ElastiCache for Redis (WordPress object cache) | ✅ Implemented (Multi-AZ replication group) |
+| Amazon S3 media offload served through CloudFront | ✅ Implemented (private bucket, CloudFront OAC, IRSA) |
 | Terraform Cloud / remote state | 🔜 Planned |
 | GitHub Actions CI/CD | 🔜 Planned |
 
@@ -34,14 +34,16 @@ The diagram shows the **target architecture**. This table tracks what is built t
 | Component | Technology |
 | :--- | :--- |
 | **Cloud Provider** | AWS (`us-east-1`) |
-| **Infrastructure as Code** | Terraform (VPC, EKS, RDS, EFS, WAF, CloudFront) |
+| **Infrastructure as Code** | Terraform (VPC, EKS, RDS, EFS, WAF, CloudFront, ElastiCache, S3, IAM) |
 | **Container Orchestration** | Kubernetes 1.35 (EKS Managed Node Groups, managed add-ons) |
 | **Autoscaling** | Horizontal Pod Autoscaler driven by metrics-server |
 | **Edge / HTTPS** | Amazon CloudFront (default `*.cloudfront.net` certificate) |
 | **Web Application Firewall** | AWS WAFv2 (AWS managed rule groups) attached to the ALB |
 | **Load Balancing** | Application Load Balancer managed by the AWS Load Balancer Controller |
 | **Database** | Amazon RDS for MySQL (Multi-AZ Primary & Standby) |
-| **Storage** | Amazon EFS for persistent shared WordPress content (`wp-content/uploads`) |
+| **Storage** | Amazon EFS for persistent shared WordPress content, Amazon S3 (private bucket) for offloaded media |
+| **Caching** | Amazon ElastiCache for Redis 7.1 (WordPress object cache through the Redis Object Cache plugin and Predis), Amazon CloudFront for media |
+| **Pod-to-AWS access** | IAM Roles for Service Accounts (IRSA), so pods use temporary credentials with no stored keys |
 | **CI/CD** | GitHub Actions (planned) |
 
 ---
@@ -53,6 +55,7 @@ The diagram shows the **target architecture**. This table tracks what is built t
 - [Phase 3: Kubernetes Orchestration & Storage Configuration](#-phase-3-kubernetes-orchestration--storage-configuration)
 - [Phase 4: Ingress, Load Balancing & Security](#-phase-4-ingress-load-balancing--security)
 - [Phase 5: Scalability & Resilience](#-phase-5-scalability--resilience)
+- [Phase 6: Performance (Redis Object Cache & S3 Media Offload)](#-phase-6-performance-redis-object-cache--s3-media-offload)
 - [Known Limitations and Next Improvements](#-known-limitations-and-next-improvements)
 - [Roadmap](#-roadmap)
 
@@ -83,13 +86,18 @@ aws-eks-wordpress-enterprise/
 │   ├── rds.tf                  # Multi-AZ MySQL database
 │   ├── efs.tf                  # Elastic File System storage
 │   ├── waf.tf                  # WAFv2 Web ACL with managed rule groups
-│   ├── cloudfront.tf           # CloudFront distribution (HTTPS front door)
+│   ├── cloudfront.tf           # CloudFront distribution (ALB origin + S3 media origin)
+│   ├── cloudfront_media.tf     # Origin access control and S3 bucket policy for CloudFront
+│   ├── redis.tf                # ElastiCache Redis replication group and security group
+│   ├── s3.tf                   # Private S3 bucket for WordPress media
+│   ├── irsa_wordpress.tf       # IAM role (IRSA) letting WordPress pods use the media bucket
 │   └── .terraform.lock.hcl     # Provider version lock file
 ├── kubernetes/                 # Kubernetes deployment manifests
 │   ├── storage-class.yaml      # EFS StorageClass (efs.csi.aws.com)
 │   ├── persistent-volume.yaml  # Persistent volume configuration
 │   ├── wordpress-pvc.yaml      # ReadWriteMany PersistentVolumeClaim
 │   ├── wordpress-deployment.yaml
+│   ├── wordpress-serviceaccount.yaml  # ServiceAccount annotated with the IRSA role
 │   ├── wordpress-service.yaml
 │   ├── ingress.yaml            # ALB Ingress (WAF + CloudFront-only access)
 │   ├── hpa.yaml                # Horizontal Pod Autoscaler (2–5 replicas, 70% CPU)
@@ -367,6 +375,127 @@ Browser ──HTTPS──▶ CloudFront ──HTTP──▶ ALB (WAF attached) �
 
 ---
 
+## ⚡ Phase 6: Performance (Redis Object Cache & S3 Media Offload)
+
+> **Note:** Account-specific identifiers (the AWS account ID and the Redis endpoint host) are shown as placeholders in this section.
+
+### 🎯 Phase Objectives
+
+- Cut the number of database round trips per page by adding a **Redis object cache** (Amazon ElastiCache).
+- Stop storing uploaded media on the shared EFS volume only: copy it to a **private S3 bucket** and serve it through **CloudFront**.
+- Give the WordPress pods access to S3 with **IRSA** (temporary, role-based credentials) instead of access keys.
+- Prove each piece with measurements and screenshots.
+
+### 🏗️ Traffic Flow
+
+```text
+Pages:  Browser ──▶ CloudFront ──▶ ALB (WAF) ──▶ WordPress pods ──▶ RDS MySQL / EFS
+                                                        └──────────▶ ElastiCache Redis (object cache)
+
+Media:  Browser ──▶ CloudFront ──(OAC, /wp-content/uploads/*)──▶ private S3 bucket
+Upload: WordPress pod ──(IRSA role)──▶ S3 bucket
+```
+
+### 🛠️ Part A: Redis Object Cache
+
+#### 1. ElastiCache for Redis (`redis.tf`)
+
+- Created a Redis 7.1 **replication group** (`aws-eks-wordpress-redis`): `cache.t3.micro`, two nodes in different Availability Zones, **automatic failover and Multi-AZ** enabled, encryption at rest enabled, no snapshots (a cache can be rebuilt).
+- Placed it in a subnet group of the private subnets.
+- Created a dedicated security group that allows TCP `6379` **only from the EKS worker node security group**.
+
+#### 2. WordPress Integration
+
+- Installed the **Redis Object Cache** plugin and set the `WP_REDIS_*` constants (host, port, `predis` client, short timeouts, and a cache key salt) through `WORDPRESS_CONFIG_EXTRA` in the Deployment, so the settings live in Git and are identical on every pod.
+- The official WordPress image evaluates `WORDPRESS_CONFIG_EXTRA` as PHP on every request instead of writing it into `wp-config.php`. A `grep` of `wp-config.php` for the Redis constants therefore finds nothing, even though they are active.
+- Short Redis timeouts mean a Redis outage slows WordPress down instead of hanging it.
+
+#### 3. Results
+
+- The plugin reported a connected cache with a hit rate of about **98%**.
+- Page timings (same pages, before and after enabling the cache):
+
+| Page | Before | After |
+| :--- | :--- | :--- |
+| Front page | 0.392 s | 0.363 s |
+| Search | 0.450 s | 0.331 s |
+
+- The gain is modest on a small test site. It grows with the number of database queries per page, which is the cost the cache removes.
+
+### 🛠️ Part B: S3 Media Offload Through CloudFront
+
+#### 1. Private S3 Bucket (`s3.tf`)
+
+- Created `aws-eks-wordpress-media-<account-id>` with **Block All Public Access** on, `BucketOwnerEnforced` object ownership (no ACLs), and default AES256 encryption.
+
+#### 2. CloudFront as the Only Reader (`cloudfront_media.tf`, `cloudfront.tf`)
+
+- Added an **Origin Access Control (OAC)** with SigV4 signing and a second origin on the distribution for the bucket.
+- Added an ordered cache behavior for `/wp-content/uploads/*` that sends those paths to S3 with the managed **CachingOptimized** policy. All other paths still go to the ALB with caching disabled.
+- The bucket policy allows `s3:GetObject` only to the CloudFront service principal, and only when `AWS:SourceArn` matches this distribution. A direct request to the bucket returns **403**.
+
+#### 3. IRSA for the WordPress Pods (`irsa_wordpress.tf`, `wordpress-serviceaccount.yaml`)
+
+- Created the IAM role `aws-eks-wordpress-media-role` whose trust policy accepts only the EKS OIDC provider, for the subject `system:serviceaccount:default:wordpress` and the audience `sts.amazonaws.com`.
+- Permissions are limited to this bucket: `GetObject`, `PutObject`, and `DeleteObject` on the objects, and `ListBucket`, `GetBucketLocation`, `GetBucketPublicAccessBlock`, and `GetBucketOwnershipControls` on the bucket.
+- Created the `wordpress` ServiceAccount with the annotation `eks.amazonaws.com/role-arn`, and set `serviceAccountName: wordpress` in the Deployment. The pods then receive `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE`, so no access keys exist anywhere.
+
+#### 4. WP Offload Media Lite
+
+- Configured through the `AS3CF_SETTINGS` constant (bucket, region, `use-server-roles`, the `wp-content/uploads/` prefix, and the CloudFront domain as the delivery domain). The plugin shows these fields as *Defined in wp-config.php* and reports **"Storage provider is successfully connected"**, which confirms IRSA works end to end.
+- The plugin also shows a *Block All Public Access* warning on the delivery tab. This is expected: it assumes the bucket is read directly, while here only CloudFront reads it.
+- `remove-local-file` stays off, so each file exists on both EFS and S3, which keeps a safe fallback.
+
+#### 5. Verification
+
+- Uploaded an image through the Media Library. S3 received the original plus four resized versions under `wp-content/uploads/<year>/<month>/<version>/`.
+- Requests to the CloudFront URL returned `200` with `Server: AmazonS3`, and repeated `GET` requests showed `x-cache: Hit from cloudfront` after the first miss.
+- A request straight to the S3 URL returned `403 Forbidden`.
+
+### 🧯 Problems Found and Fixed
+
+#### WAF body-size rule blocked media uploads
+
+- **Symptom:** uploads failed in the Media Library with "The server cannot process the image", and later `/wp-admin/media-new.php` returned a bare `403 Forbidden`. Nothing appeared in the pod logs and the pods had no restarts.
+- **Diagnosis:** this WAF is attached to the **ALB**, so the block happened there. `get-sampled-requests` for each rule group showed every blocked request came from one rule, `SizeRestrictions_BODY` in the Common Rule Set, on `POST /wp-admin/async-upload.php` and `/wp-admin/media-new.php`. The SQL injection and WordPress rule groups blocked nothing.
+- **Fix:** changed only that rule to **count** and added a custom rule (priority 5) that **blocks request bodies over 8 KB everywhere except `/wp-admin/` and `/wp-json/`**. Public pages keep the size protection, while uploads and the editor, which sit behind the WordPress login, work.
+- **Side finding:** one sampled request was blocked by `CrossSiteScripting_BODY` on an upload. Binary image data can occasionally look like script to that rule. This is recorded under Known Limitations.
+
+#### Plugin install timed out through CloudFront
+
+- Installing the plugin from wp-admin failed twice: first with "Could not copy file" part-way through, then with a CloudFront `504 Gateway Timeout`. Copying hundreds of small files onto EFS is slow, and CloudFront stops waiting for the origin after about 30 seconds.
+- **Fix:** removed the half-copied folder, downloaded the plugin zip from inside the pod, extracted it into `wp-content/plugins/`, and activated it in wp-admin (activation is a fast database change). Commands run inside the pod avoid the web request and its timeout.
+
+### 📸 Portfolio Screenshots (Phase 6)
+
+| Screenshot File Name | Visual Proof / Content Description |
+| :--- | :--- |
+| `docs/screenshots/phase6-redis-connected.png` | Redis Object Cache plugin reporting a connected cache. |
+| `docs/screenshots/phase6-redis-cache-stats.png` | Cache statistics showing a hit rate of about 98%. |
+| `docs/screenshots/phase6-redis-timing.png` | Page timings before and after enabling the object cache. |
+| `docs/screenshots/phase6-s3-cloudfront-test.png` | A test object in the private bucket served through CloudFront, with the direct S3 request refused. |
+| `docs/screenshots/phase6-s3-plugin-connected.png` | WP Offload Media Lite storage settings: bucket connected through the IRSA role. |
+| `docs/screenshots/phase6-s3-plugin-delivery.png` | Delivery settings defined in `wp-config.php`, with the CloudFront domain and URL preview. |
+| `docs/screenshots/phase6-s3-upload-media-library.png` | Image uploaded through the WordPress Media Library. |
+| `docs/screenshots/phase6-s3-bucket-objects.png` | `aws s3 ls` showing the original and four resized versions in the bucket. |
+| `docs/screenshots/phase6-s3-cloudfront-hit.png` | Repeated requests to the CloudFront media URL: one miss, then cache hits. |
+| `docs/screenshots/phase6-s3-direct-403.png` | The same file requested directly from S3 returning `403 Forbidden`. |
+| `docs/screenshots/phase6-waf-sizerestrictions-block.png` | WAF sampled requests showing `SizeRestrictions_BODY` blocking upload requests. |
+
+![Phase 6 - Redis Connected](docs/screenshots/phase6-redis-connected.png)
+![Phase 6 - Redis Cache Statistics](docs/screenshots/phase6-redis-cache-stats.png)
+![Phase 6 - Page Timing](docs/screenshots/phase6-redis-timing.png)
+![Phase 6 - S3 Through CloudFront Test](docs/screenshots/phase6-s3-cloudfront-test.png)
+![Phase 6 - Plugin Connected Through IRSA](docs/screenshots/phase6-s3-plugin-connected.png)
+![Phase 6 - Plugin Delivery Settings](docs/screenshots/phase6-s3-plugin-delivery.png)
+![Phase 6 - Media Library Upload](docs/screenshots/phase6-s3-upload-media-library.png)
+![Phase 6 - Objects in the Bucket](docs/screenshots/phase6-s3-bucket-objects.png)
+![Phase 6 - CloudFront Cache Hits](docs/screenshots/phase6-s3-cloudfront-hit.png)
+![Phase 6 - Direct S3 Access Denied](docs/screenshots/phase6-s3-direct-403.png)
+![Phase 6 - WAF Body Size Block](docs/screenshots/phase6-waf-sizerestrictions-block.png)
+
+---
+
 ## ⚠️ Known Limitations and Next Improvements
 
 **Current limitations**
@@ -378,8 +507,13 @@ Browser ──HTTPS──▶ CloudFront ──HTTP──▶ ALB (WAF attached) �
 - **Terraform state is local.** Remote state (Terraform Cloud or an S3 backend) is required before CI/CD (planned in Phase 7).
 - **The HPA scales pods, not nodes.** The node group is a fixed 3–6 range managed by Terraform. A node autoscaler (Cluster Autoscaler or Karpenter) would grow it automatically.
 - **CPU-based autoscaling suits CPU-bound work.** WordPress here is mostly I/O-bound (database and EFS), so caching and offload (Phase 6) matter more than adding replicas.
+- **Redis traffic is not encrypted in transit and has no auth token.** Encryption at rest is on and access is limited by security group to the worker nodes. In-transit TLS plus an auth token would harden it.
+- **Some uploads may still be blocked by the WAF.** The body-size exception covers `/wp-admin/` and `/wp-json/` only, and the managed `CrossSiteScripting_BODY` rule can occasionally match binary image data. The remedy would be a similar narrow override, left out to avoid weakening the WAF further.
+- **Large uploads can hit CloudFront's 30-second origin timeout** and WordPress's image-processing memory limits. A very large photo failed to upload; a small image worked. Raising the CloudFront origin response timeout and the pod and PHP memory limits would help.
+- **Media is kept on both EFS and S3** (`remove-local-file` is off), which is safe but uses more storage.
+- **The media bucket name contains the AWS account ID.** This is not a secret, but it is visible in the Terraform and the screenshots.
 - **Cost awareness:** the EKS control plane, worker nodes, NAT gateway, ALB, Multi-AZ RDS, and WAF all accrue hourly charges while the environment runs.
-- **Teardown order:** delete the Ingress first (so the controller removes the ALB and detaches its security groups), then run `terraform destroy` for the remaining infrastructure.
+- **Teardown order:** delete the Ingress first (so the controller removes the ALB and detaches its security groups), empty the media bucket (`aws s3 rm s3://<bucket> --recursive`, because the bucket has no `force_destroy`), then run `terraform destroy` for the remaining infrastructure.
 
 **Optional hardening (documented, not built)**
 
@@ -395,6 +529,6 @@ Browser ──HTTPS──▶ CloudFront ──HTTP──▶ ALB (WAF attached) �
 | Phase | Focus | Planned Work | Status |
 | :--- | :--- | :--- | :--- |
 | **Phase 5** | Scalability | metrics-server, HPA, 2+ replicas across zones, PDB, EKS 1.35, node group 3–6 | ✅ Complete |
-| **Phase 6** | Performance | Amazon ElastiCache for Redis (object cache), Amazon S3 media offload served through CloudFront | 🔜 Planned |
+| **Phase 6** | Performance | Amazon ElastiCache for Redis (object cache), Amazon S3 media offload served through CloudFront, IRSA | ✅ Complete |
 | **Phase 7** | Automation | Remote Terraform state (Terraform Cloud), GitHub Actions CI/CD | 🔜 Planned |
 | **Final** | Documentation | Portfolio documentation and final end-to-end verification | 🔜 Planned |
