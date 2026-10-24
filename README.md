@@ -1,6 +1,18 @@
 # AWS EKS Enterprise WordPress Infrastructure
 
-An enterprise-grade, highly available WordPress architecture deployed on **Amazon EKS (Elastic Kubernetes Service)**, using **Terraform** for Infrastructure as Code (IaC), **Kubernetes/Helm** for orchestration, and automated **CI/CD** pipelines.
+A production-style, highly available WordPress platform on **Amazon EKS**, built entirely with **Terraform**, deployed with **Kubernetes manifests and Helm**, and delivered through a keyless **GitHub Actions** pipeline. It was built in seven phases, verified end to end, and then torn down to stop AWS charges.
+
+---
+
+## ⭐ Highlights
+
+- **Zero-downtime Kubernetes upgrade:** moved EKS from `1.31` to `1.35` one minor version at a time while a watcher loop showed the site returning `200` throughout.
+- **Keyless CI/CD:** GitHub Actions reaches AWS through **OIDC**: a read-only role for plans on pull requests, and an apply role usable only after manual approval. No AWS access keys are stored anywhere.
+- **Defense in depth at the edge:** CloudFront (HTTPS) → **WAFv2** → ALB that accepts traffic **only from CloudFront**, plus a private S3 media bucket readable only through CloudFront **Origin Access Control**.
+- **High availability by design:** 2+ WordPress replicas forced into different Availability Zones, a PodDisruptionBudget, Multi-AZ RDS, Multi-AZ Redis, and EFS mount targets in both zones.
+- **Real troubleshooting, documented:** diagnosed and fixed a WAF rule blocking uploads, a metrics-server networking failure, an OIDC trust mismatch, plan drift between laptop and CI, and a hand-made security group rule that blocked `terraform destroy`.
+- **Measured, not assumed:** a load test showed CPU-based autoscaling barely reacts because WordPress here is I/O-bound. That finding drove the caching work, which reached a **~98% Redis hit rate**.
+- **Clean teardown:** destroyed in the right order, with a leftover-resource audit across 10 services (about $10/day saved). Everything is Infrastructure as Code, so `terraform apply` rebuilds it.
 
 ---
 
@@ -12,7 +24,7 @@ An enterprise-grade, highly available WordPress architecture deployed on **Amazo
 
 ### 📋 Implementation Status
 
-The diagram shows the **target architecture**. This table tracks what was built.
+The diagram shows the **as-built architecture**: everything in it was implemented and verified, and the numbered flows are explained in its legend. This table lists each component.
 
 | Component | Status |
 | :--- | :--- |
@@ -51,8 +63,25 @@ The diagram shows the **target architecture**. This table tracks what was built.
 
 ---
 
+## 🧭 Design Decisions
+
+| Decision | Why | Trade-off |
+| :--- | :--- | :--- |
+| **EKS for WordPress** | The goal was to learn and demonstrate Kubernetes platform patterns (Ingress, IRSA, HPA, PDBs, managed add-ons, zero-downtime upgrades) on a realistic stateful application. | For a single real WordPress site, ECS on Fargate or Lightsail would be cheaper and simpler. EKS pays off when many services share one platform. |
+| **CloudFront with the default certificate** | HTTPS for visitors without owning a domain, plus one place to route media to S3. | CloudFront → ALB is plain HTTP and minimum TLS is 1.0. A custom domain with ACM would fix both (see Known Limitations). |
+| **ALB locked to the CloudFront prefix list** | Forces every request through CloudFront and then the WAF. A direct request to the ALB times out. | Debugging requires going through CloudFront, or temporarily opening the security group. |
+| **EFS for shared WordPress files, S3 for media** | Multiple pods need the same themes, plugins and uploads (ReadWriteMany). Media also goes to S3 so CloudFront can cache it close to visitors. | EFS is slower for many small files (the plugin-install timeout), and media is stored twice while `remove-local-file` stays off. |
+| **IRSA instead of node or static credentials** | Each workload gets its own short-lived, least-privilege role (Load Balancer Controller, WordPress media). | More IAM setup up front: an OIDC provider and one trust policy per service account. |
+| **HCP Terraform in Local execution mode** | Remote, locked, versioned state with no AWS credentials stored in HCP. Plans and applies run on the laptop or in GitHub Actions. | The CI token expires every 30 days and has to be rotated. |
+| **Broad apply role, narrow trust** | Terraform manages IAM, VPC, EKS and more, so a tight policy is hard to write. Instead the role can only be assumed from this repository's `production` environment, after a manual approval. | `AdministratorAccess` is still broad. Scoping it down is the next hardening step. |
+| **CPU-based HPA kept, caching added** | The HPA proves the scaling mechanism. The load test showed the real bottleneck is I/O, so Redis and S3 offload were the better performance fix. | A request-based metric (via KEDA or ALB request count) would scale better for this workload. |
+
+---
+
 ## 📑 Table of Contents
 
+- [Highlights](#-highlights)
+- [Design Decisions](#-design-decisions)
 - [Phase 1: Repository Setup, Folder Structure & Version Control](#-phase-1-repository-setup-folder-structure--version-control)
 - [Phase 2: Infrastructure Provisioning (Terraform)](#-phase-2-infrastructure-provisioning-terraform)
 - [Phase 3: Kubernetes Orchestration & Storage Configuration](#-phase-3-kubernetes-orchestration--storage-configuration)
